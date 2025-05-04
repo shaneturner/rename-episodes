@@ -38,28 +38,25 @@ jobs:
     needs: create_release # Run only after the draft release is created
     strategy:
       matrix:
-        # Define the build targets (platform, OS runner, resulting file suffix, packaging command)
+        # Define the build targets (platform, OS runner, resulting file suffix)
+        # REMOVED package_cmd from here
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             asset_suffix: linux-x64.tar.gz
-            package_cmd: |
-              tar czvf ${{ env.APP_NAME }}-${{ github.ref_name }}-linux-x64.tar.gz -C target/${{ matrix.target }}/release ${{ env.APP_NAME }} README.md LICENSE
+            asset_exe_name: ${{ env.APP_NAME }} # Linux executable name
           - target: x86_64-pc-windows-gnu # Using GNU toolchain is often easier for cross-compiling on Linux runners
             os: ubuntu-latest
             asset_suffix: windows-x64.zip
-            package_cmd: |
-              zip -j ${{ env.APP_NAME }}-${{ github.ref_name }}-windows-x64.zip target/${{ matrix.target }}/release/${{ env.APP_NAME }}.exe README.md LICENSE
+            asset_exe_name: ${{ env.APP_NAME }}.exe # Windows adds .exe
           - target: x86_64-apple-darwin # Intel macOS
             os: macos-latest # Needs to run on a macOS runner
             asset_suffix: macos-x64.tar.gz
-            package_cmd: |
-              tar czvf ${{ env.APP_NAME }}-${{ github.ref_name }}-macos-x64.tar.gz -C target/${{ matrix.target }}/release ${{ env.APP_NAME }} README.md LICENSE
+            asset_exe_name: ${{ env.APP_NAME }} # macOS executable name
           - target: aarch64-apple-darwin # Apple Silicon macOS
             os: macos-latest # Needs to run on a macOS runner
             asset_suffix: macos-arm64.tar.gz
-            package_cmd: |
-              tar czvf ${{ env.APP_NAME }}-${{ github.ref_name }}-macos-arm64.tar.gz -C target/${{ matrix.target }}/release ${{ env.APP_NAME }} README.md LICENSE
+            asset_exe_name: ${{ env.APP_NAME }} # macOS executable name
 
     runs-on: ${{ matrix.os }} # Run on the OS specified in the matrix configuration
     steps:
@@ -81,16 +78,38 @@ jobs:
         # Run cargo build for the specified target in release mode
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package artifact
-        shell: bash # Use bash for the packaging commands defined in the matrix
-        run: ${{ matrix.package_cmd }} # Execute the tar or zip command
+      # --- Packaging Steps ---
+      # Use if conditions based on the OS or target to run the correct command
+      - name: Package artifact (Linux/macOS)
+        shell: bash
+        # Run if the target is Linux or macOS
+        if: contains(matrix.target, 'linux') || contains(matrix.target, 'darwin')
+        run: |
+          asset_dir="target/${{ matrix.target }}/release"
+          asset_filename="${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }}"
+          # Ensure LICENSE exists before copying
+          if [ ! -f LICENSE ]; then echo "LICENSE file not found!" >&2; exit 1; fi
+          tar czvf "${asset_filename}" -C "${asset_dir}" "${{ matrix.asset_exe_name }}" -C . README.md LICENSE
 
+      - name: Package artifact (Windows)
+        shell: bash
+        # Run if the target is Windows
+        if: contains(matrix.target, 'windows')
+        run: |
+          asset_dir="target/${{ matrix.target }}/release"
+          asset_filename="${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }}"
+          # Ensure LICENSE exists before copying
+          if [ ! -f LICENSE ]; then echo "LICENSE file not found!" >&2; exit 1; fi
+          # Using zip -j to junk paths and put files directly in the archive root
+          zip -j "${asset_filename}" "${asset_dir}/${{ matrix.asset_exe_name }}" README.md LICENSE
+      # --- End Packaging Steps ---
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create_release.outputs.upload_url }} # URL from the first job
-          asset_path: ./${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }} # Path to the generated .zip or .tar.gz
-          asset_name: ${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }} # How the file will be named on the Releases page
+          # Construct asset path/name directly here, matching the packaging steps
+          asset_path: ./${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }}
+          asset_name: ${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }}
           asset_content_type: application/octet-stream # Standard content type for archives
