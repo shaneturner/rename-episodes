@@ -1,0 +1,29 @@
+# .github/workflows/test-release.yml
+name: Test Release Creation
+
+# Allow manual triggering from the Actions tab
+on:
+  workflow_dispatch:
+
+# Request write permission explicitly
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Test Release
+        id: test_create
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Use a unique dummy tag name for each run to avoid conflicts
+          tag_name: test-tag-${{ github.run_id }}
+          release_name: Test Release ${{ github.run_id }}
+          body: "This is a test release created by a workflow."
+          draft: true
+          prerelease: false
+      - name: Output result
+        run: echo "Release URL: ${{ steps.test_create.outputs.html_url }}"
