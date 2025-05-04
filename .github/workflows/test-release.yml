@@ -1,5 +1,5 @@
 # .github/workflows/test-release.yml
-name: Test Release Creation
+name: Test Release Creation Minimal
 
 # Allow manual triggering from the Actions tab
 on:
@@ -13,17 +13,16 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Create Test Release
+      - name: Create Test Release Attempt
         id: test_create
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           # Use a unique dummy tag name for each run to avoid conflicts
-          tag_name: test-tag-${{ github.run_id }}
-          release_name: Test Release ${{ github.run_id }}
-          body: "This is a test release created by a workflow."
+          tag_name: test-tag-minimal-${{ github.run_id }}
+          release_name: Test Minimal Release ${{ github.run_id }}
+          body: "This is a minimal test release created by a workflow."
           draft: true
           prerelease: false
-      - name: Output result
-        run: echo "Release URL: ${{ steps.test_create.outputs.html_url }}"
+      # Removed the echo step that depends on the above step succeeding
