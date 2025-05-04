@@ -1,6 +1,6 @@
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet}; // HashSet is already used, perfect
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
@@ -22,8 +22,8 @@ struct ParsedInfo {
     original_filename: String,
     extension: String,
     show_name_part: Option<String>,
-    season_prefix_part: Option<String>,
-    episode_number_part: Option<String>,
+    season_prefix_part: Option<String>,  // Should already be "Sxx"
+    episode_number_part: Option<String>, // Should already be "Exx"
     remainder_part: Option<String>,
     needs_user_input: bool,
 }
@@ -35,8 +35,8 @@ enum ParseError {
     // Could add more specific errors if needed
 }
 
-// --- Helper Functions --- (Keep clean_segment, parse_filename, get_dir_name, prompt_user as before)
-// ... (paste the existing helper functions here) ...
+// --- Helper Functions ---
+
 /// Cleans a string segment: replaces spaces with dots, removes multiple dots.
 fn clean_segment(segment: &str) -> String {
     let mut cleaned = segment.trim().replace(' ', ".");
@@ -47,8 +47,38 @@ fn clean_segment(segment: &str) -> String {
     if cleaned != "." {
         cleaned = cleaned.trim_matches('.').to_string();
     }
-    cleaned
+    // Ensure lowercase for consistent processing before capitalization
+    cleaned.to_lowercase()
 }
+
+// --- NEW HELPER FUNCTION ---
+/// Capitalizes words in a dot-separated string, skipping exceptions.
+fn capitalize_title_case(text: &str) -> String {
+    // Set of lowercase words to skip capitalization (except if they are the first word)
+    let exceptions: HashSet<&str> = ["the", "of", "and"].iter().cloned().collect();
+
+    text.split('.')
+        .enumerate()
+        .map(|(index, word)| {
+            if word.is_empty() {
+                String::new() // Handle potential empty segments
+            } else if index == 0 || !exceptions.contains(word) {
+                // Capitalize the first word OR any word not in exceptions
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(), // Should not happen if word is not empty
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                }
+            } else {
+                // Keep exception words lowercase
+                word.to_string()
+            }
+        })
+        .filter(|s| !s.is_empty()) // Remove empty strings resulting from multiple dots
+        .collect::<Vec<String>>()
+        .join(".")
+}
+// --- END NEW HELPER FUNCTION ---
 
 /// Attempts to parse filename components.
 fn parse_filename(path: &Path) -> Result<ParsedInfo, ParseError> {
@@ -87,6 +117,7 @@ fn parse_filename(path: &Path) -> Result<ParsedInfo, ParseError> {
 
     if let Some(se_match) = SE_RE.find(&stem) {
         // Found SxxExx
+        // Use clean_segment which now enforces lowercase for consistent input to capitalize_title_case later
         let potential_show = clean_segment(&stem[..se_match.start()]);
         if !potential_show.is_empty() {
             show_name_part = Some(potential_show);
@@ -96,18 +127,18 @@ fn parse_filename(path: &Path) -> Result<ParsedInfo, ParseError> {
 
         // Extract Sxx and Exx using captures from the specific SxxExx regex
         if let Some(caps) = SE_RE.captures(se_match.as_str()) {
-            // Format season number with leading zero if needed
+            // Format season number with leading zero if needed, ensure 'S' is uppercase
             let season_num: u32 = caps.get(1).unwrap().as_str().parse().unwrap_or(0);
-            season_prefix_part = Some(format!("S{:02}", season_num));
+            season_prefix_part = Some(format!("S{:02}", season_num)); // 'S' is uppercase
 
-            // Format episode number with leading zero if needed
+            // Format episode number with leading zero if needed, ensure 'E' is uppercase
             let episode_num: u32 = caps.get(2).unwrap().as_str().parse().unwrap_or(0);
-            episode_number_part = Some(format!("E{:02}", episode_num));
+            episode_number_part = Some(format!("E{:02}", episode_num)); // 'E' is uppercase
         } else {
-            // This shouldn't happen if SE_RE.find succeeded, but handle defensively
             needs_user_input = true;
         }
 
+        // Remainder is also cleaned (made lowercase)
         let potential_remainder = clean_segment(&stem[se_match.end()..]);
         if !potential_remainder.is_empty() {
             remainder_part = Some(potential_remainder);
@@ -119,24 +150,22 @@ fn parse_filename(path: &Path) -> Result<ParsedInfo, ParseError> {
         if let Some(e_match) = E_RE.find(&stem) {
             if let Some(caps) = E_RE.captures(e_match.as_str()) {
                 let episode_num: u32 = caps.get(1).unwrap().as_str().parse().unwrap_or(0);
-                episode_number_part = Some(format!("E{:02}", episode_num));
+                episode_number_part = Some(format!("E{:02}", episode_num)); // 'E' is uppercase
 
-                // Attempt to derive show name from part before E## if S## was missing
+                // Attempt to derive show name (cleaned/lowercased)
                 let potential_show = clean_segment(&stem[..e_match.start()]);
                 if !potential_show.is_empty() {
-                    show_name_part = Some(potential_show); // Use this if user doesn't provide one
+                    show_name_part = Some(potential_show);
                 }
 
-                // Remainder is after E##
+                // Remainder is after E## (cleaned/lowercased)
                 let potential_remainder = clean_segment(&stem[e_match.end()..]);
                 if !potential_remainder.is_empty() {
                     remainder_part = Some(potential_remainder);
                 }
             }
         } else {
-            // Neither SxxExx nor Exx found. Consider the whole stem as potential show/remainder?
-            // For now, we'll rely on user input for Show/Season, and Exx is just missing.
-            // We could try setting show_name_part = clean_segment(&stem) here as a fallback.
+            // Neither SxxExx nor Exx found. Consider the whole stem (cleaned/lowercased)
             let potential_show = clean_segment(&stem);
             if !potential_show.is_empty() {
                 show_name_part = Some(potential_show);
@@ -150,22 +179,17 @@ fn parse_filename(path: &Path) -> Result<ParsedInfo, ParseError> {
     }
     // Crucial: If we need user input for Season, we MUST have an Episode number parsed
     if needs_user_input && season_prefix_part.is_none() && episode_number_part.is_none() {
-        // Cannot construct SxxExx later if Exx is missing now.
-        // Treat this as unparsable for renaming purposes without Exx.
-        // We could potentially skip these files later. For now, keep needs_user_input=true
-        // and let the second pass handle the missing Exx.
-        // Reduce verbosity here now that we filter extensions first
-        // println!("Warning: File '{}' is missing Season and Episode identifiers (SxxExx). It might be skipped or require manual intervention if confirmed.", original_filename);
+        // Existing logic for warning is fine.
     }
 
     Ok(ParsedInfo {
         original_path: path.to_path_buf(),
         original_filename,
-        extension,
-        show_name_part,
-        season_prefix_part,
-        episode_number_part,
-        remainder_part,
+        extension,           // Keep extension case as original
+        show_name_part,      // Stored as cleaned/lowercase here
+        season_prefix_part,  // Stored as "Sxx"
+        episode_number_part, // Stored as "Exx"
+        remainder_part,      // Stored as cleaned/lowercase here
         needs_user_input,
     })
 }
@@ -203,55 +227,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- Define Allowed Video Extensions (Lowercase) ---
     let video_extensions: HashSet<String> = [
-        "mkv", "mp4", "avi", "mov", "wmv", "flv", "webm", "mpeg", "mpg", "ts", "m2ts",
-        "vob",
-        // Add any other extensions you commonly encounter
+        "mkv", "mp4", "avi", "mov", "wmv", "flv", "webm", "mpeg", "mpg", "ts", "m2ts", "vob",
     ]
     .iter()
     .map(|&s| s.to_lowercase())
     .collect();
 
-    // --- Get Default Names from Directory Structure --- (Keep as before)
+    // --- Get Default Names from Directory Structure ---
     let parent_dir = target_directory.parent();
     let grandparent_dir = parent_dir.and_then(|p| p.parent());
-    let default_season_dir_name = parent_dir.and_then(get_dir_name);
-    let default_show_dir_name = grandparent_dir.and_then(get_dir_name);
+    // Clean the default names so they are dot-separated and lowercase for consistency
+    let default_season_dir_name = parent_dir.and_then(get_dir_name); //.map(|s| clean_segment(&s)); // Keep default raw for prompt
+    let default_show_dir_name = grandparent_dir.and_then(get_dir_name); //.map(|s| clean_segment(&s)); // Keep default raw for prompt
 
     let mut parsed_files_info: Vec<ParsedInfo> = Vec::new();
     let mut all_paths_in_dir: HashSet<PathBuf> = HashSet::new();
     let mut any_file_needs_input = false;
 
     // --- Pass 1: Parse all files ---
-    println!("Filtering for video files: {:?}", video_extensions); // Optional: Show which extensions are checked
+    println!("Filtering for video files: {:?}", video_extensions);
     for entry_result in fs::read_dir(&target_directory)? {
         let entry = entry_result?;
         let path = entry.path();
-        all_paths_in_dir.insert(path.clone()); // Store all paths found
+        all_paths_in_dir.insert(path.clone());
 
-        // Skip self
         if let Some(script) = &script_path {
             if path == *script {
                 continue;
             }
         }
 
-        // --- Add Extension Check Here ---
         if path.is_file() {
             let extension = path
                 .extension()
                 .and_then(OsStr::to_str)
                 .map(str::to_lowercase)
-                .unwrap_or_default(); // Get extension, make lowercase
+                .unwrap_or_default();
 
             if !video_extensions.contains(&extension) {
-                // println!("Skipping non-video file: {}", path.display()); // Optional: Verbose logging
-                continue; // Skip this file if extension is not in the list
+                continue;
             }
 
-            // --- Only proceed if it's a video file ---
             match parse_filename(&path) {
                 Ok(info) => {
-                    // Only print warning if it's a video file that needs input
                     if info.needs_user_input
                         && info.season_prefix_part.is_none()
                         && info.episode_number_part.is_none()
@@ -267,11 +285,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     parsed_files_info.push(info);
                 }
-                Err(ParseError::NotAFile) => { /* Should not happen here as we check is_file */ }
+                Err(ParseError::NotAFile) => {}
                 Err(e) => eprintln!("Warning: Could not parse '{}': {:?}", path.display(), e),
             }
         }
-        // --- End Extension Check ---
     }
 
     if parsed_files_info.is_empty() {
@@ -279,19 +296,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // --- User Input Phase (if needed) --- (Keep as before)
-    // ... (paste the existing User Input Phase here) ...
-    let mut global_show_name: Option<String> = None;
-    let mut global_season_prefix: Option<String> = None; // Expecting "S01", "S12" etc.
+    // --- User Input Phase (if needed) ---
+    let mut global_show_name: Option<String> = None; // Will store cleaned/lowercase version
+    let mut global_season_prefix: Option<String> = None; // Will store "Sxx"
 
     if any_file_needs_input {
         println!("\nSome video files lack Show Name or Season info (Sxx) in the filename.");
 
+        // Prompt for Show Name
         let user_show_name = prompt_user(
             "Enter Show Name for these files",
             default_show_dir_name.as_deref(),
         )?;
         if !user_show_name.is_empty() {
+            // Clean the input here
             global_show_name = Some(clean_segment(&user_show_name));
         } else {
             println!(
@@ -299,45 +317,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
 
+        // Prompt for Season Number
         let user_season_str = prompt_user(
             "Enter Season Number (e.g., 1, 02, 15) for these files",
             default_season_dir_name.as_deref(), // Default might be "Season 01" or just "1"
         )?;
 
-        // Attempt to parse season number from various inputs
+        // Attempt to parse season number and format correctly (Sxx)
         let cleaned_season_input =
-            user_season_str.trim_start_matches(|c: char| !c.is_ascii_digit()); // Remove leading non-digits like "Season "
+            user_season_str.trim_start_matches(|c: char| !c.is_ascii_digit());
         if let Ok(num) = cleaned_season_input.parse::<u32>() {
-            global_season_prefix = Some(format!("S{:02}", num));
+            global_season_prefix = Some(format!("S{:02}", num)); // Ensure 'S' is uppercase
         } else {
             println!(
                 "Could not parse Season Number '{}'. Files needing it will be skipped.",
                 user_season_str
             );
-            // Set any_file_needs_input to false effectively, as we can't proceed for those files
             any_file_needs_input = false; // Prevent trying to rename files that needed this input
         }
     }
 
-    // --- Pass 2: Construct Final Names & Prepare Renames --- (Keep as before)
-    // ... (paste the existing Pass 2 logic here) ...
+    // --- Pass 2: Construct Final Names & Prepare Renames ---
     let mut proposed_renames: HashMap<PathBuf, PathBuf> = HashMap::new();
 
     for info in parsed_files_info {
-        let mut final_show: Option<String> = info.show_name_part.clone();
-        let mut final_season: Option<String> = info.season_prefix_part.clone();
-        let final_episode: Option<String> = info.episode_number_part.clone(); // Must exist if season was missing
-        let final_remainder: Option<String> = info.remainder_part.clone();
-        let final_extension: String = info.extension.clone();
+        let mut final_show: Option<String> = info.show_name_part.clone(); // This is cleaned/lowercase
+        let mut final_season: Option<String> = info.season_prefix_part.clone(); // This is "Sxx"
+        let final_episode: Option<String> = info.episode_number_part.clone(); // This is "Exx"
+        let final_remainder: Option<String> = info.remainder_part.clone(); // This is cleaned/lowercase
+        let final_extension: String = info.extension.clone(); // Original extension case
 
         if info.needs_user_input && any_file_needs_input {
-            // Check any_file_needs_input again in case user failed to provide valid input
             // Apply global overrides if available
             if global_show_name.is_some() {
-                final_show = global_show_name.clone();
+                final_show = global_show_name.clone(); // Already cleaned/lowercase
             }
             if global_season_prefix.is_some() {
-                final_season = global_season_prefix.clone();
+                final_season = global_season_prefix.clone(); // Already "Sxx"
             }
 
             // Critical check: Can we form "SxxExx"?
@@ -348,15 +364,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     final_season.as_deref().unwrap_or("Missing"),
                     final_episode.as_deref().unwrap_or("Missing")
                 );
-                continue; // Skip this file
+                continue;
             }
         }
 
         // Construct the new stem
         let mut new_stem_parts: Vec<String> = Vec::new();
+
+        // --- Apply Capitalization to Show Name ---
         if let Some(show) = final_show {
             if !show.is_empty() {
-                new_stem_parts.push(show);
+                // Capitalize the cleaned/lowercase show name
+                new_stem_parts.push(capitalize_title_case(&show));
             } else {
                 println!(
                     "Warning: Skipping '{}' due to empty show name component.",
@@ -371,9 +390,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             continue;
         }
+        // --- End Capitalization ---
 
+        // --- Add Season/Episode (already correctly capitalized 'S'/'E') ---
         if let Some(season) = final_season {
+            // Already "Sxx"
             if let Some(episode) = final_episode {
+                // Already "Exx"
                 new_stem_parts.push(format!("{}{}", season, episode));
             } else {
                 println!(
@@ -389,16 +412,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             continue;
         }
+        // --- End Season/Episode ---
 
+        // --- Add Remainder (leave as cleaned/lowercase) ---
         if let Some(rem) = final_remainder {
+            // Already cleaned/lowercase
             if !rem.is_empty() {
                 new_stem_parts.push(rem);
             }
         }
+        // --- End Remainder ---
 
         let new_stem = new_stem_parts.join(".");
 
-        // Reassemble the filename
+        // Reassemble the filename, keeping original extension case
         let new_filename_str = if final_extension.is_empty() {
             new_stem
         } else {
@@ -412,21 +439,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .parent()
                 .unwrap_or_else(|| Path::new("."));
             let new_path = parent_dir.join(new_filename_str);
-            // Check if the *generated* new path is different from the original
+
             if new_path != info.original_path {
-                proposed_renames.insert(info.original_path, new_path);
+                proposed_renames.insert(info.original_path.clone(), new_path.clone());
+                // Debug print to verify final name construction
+                // println!("Debug: Original: {}, Proposed: {}", info.original_path.display(), new_path.display());
+            } else {
+                // Optional: Log files that didn't change after processing
+                // println!("Debug: No change needed for {}", info.original_filename);
             }
         }
     }
 
-    // --- Display proposed changes --- (Keep as before)
-    // ... (paste the existing Display logic here) ...
+    // --- Display proposed changes ---
     if proposed_renames.is_empty() {
         println!("\nNo files need renaming based on the current rules and inputs.");
         return Ok(());
     }
 
-    // --- Display proposed changes --- (Same as before)
     println!("\nProposed renames:");
     println!("--------------------");
     let max_len_old = proposed_renames
@@ -436,20 +466,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .max()
         .unwrap_or(0);
 
-    for (old, new) in &proposed_renames {
+    // Sort the proposed renames by original filename for consistent display
+    let mut sorted_renames: Vec<_> = proposed_renames.iter().collect();
+    sorted_renames.sort_by(|(old_a, _), (old_b, _)| old_a.cmp(old_b));
+
+    for (old, new) in sorted_renames {
         let old_name = old.file_name().map_or("?", |n| n.to_str().unwrap_or("?"));
         let new_name = new.file_name().map_or("?", |n| n.to_str().unwrap_or("?"));
         println!("{:<width$} -> {}", old_name, new_name, width = max_len_old);
     }
     println!("--------------------");
 
-    // --- Conflict Checking --- (Keep as before)
-    // ... (paste the existing Conflict Checking logic here) ...
+    // --- Conflict Checking ---
     let mut potential_conflicts = Vec::new();
     let target_filenames: HashSet<&PathBuf> = proposed_renames.values().collect();
 
     for new_target_path_ref in &target_filenames {
         let target_path: &PathBuf = *new_target_path_ref;
+        // Check against *all* original files, not just those being renamed
         if all_paths_in_dir.contains(target_path) && !proposed_renames.contains_key(target_path) {
             potential_conflicts.push(format!(
                 "Target '{}' already exists and is not being renamed.",
@@ -494,20 +528,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         process::exit(1);
     }
 
-    // --- Confirmation and Renaming --- (Keep as before)
-    // ... (paste the existing Confirmation/Renaming logic here) ...
-    print!("\nProceed with renaming? (yes/no): ");
+    // --- Confirmation and Renaming ---
+    print!(
+        "\nProceed with renaming {} file(s)? (yes/no): ",
+        proposed_renames.len()
+    ); // Show count
     io::stdout().flush()?;
     let mut confirmation = String::new();
     io::stdin().read_line(&mut confirmation)?;
 
-    if confirmation.trim().to_lowercase() == "yes" {
+    let trimmed_confirmation = confirmation.trim().to_lowercase(); // Trim and lowercase
+
+    if trimmed_confirmation == "y" || trimmed_confirmation == "yes" {
+        // Check for 'y' or 'yes'
         println!("\nRenaming files...");
         let mut success_count = 0;
         let mut error_count = 0;
 
-        for (old, new) in &proposed_renames {
-            match fs::rename(old, new) {
+        // Use the sorted list for renaming as well for consistency (though not strictly necessary)
+        let mut sorted_renames_for_action: Vec<_> = proposed_renames.into_iter().collect();
+        sorted_renames_for_action.sort_by(|(old_a, _), (old_b, _)| old_a.cmp(old_b));
+
+        for (old, new) in sorted_renames_for_action {
+            // Iterate over owned values now
+            match fs::rename(&old, &new) {
+                // Borrow paths here
                 Ok(_) => {
                     println!(
                         "Renamed: '{}' to '{}'",
@@ -533,7 +578,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             success_count, error_count
         );
     } else {
-        println!("Renaming cancelled by user.");
+        // Handles "n", "no", empty input (Enter), and anything else
+        println!("Renaming cancelled."); // Changed message slightly for clarity
     }
 
     Ok(())
