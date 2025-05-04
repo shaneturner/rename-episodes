@@ -7,6 +7,10 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
+# <<<--- ADD THIS PERMISSIONS BLOCK ---<<<
+permissions:
+  contents: write # Grant write permission to repository contents (needed to create releases)
+
 env:
   CARGO_TERM_COLOR: always # Force color output in cargo logs
   APP_NAME: rename-episodes # Define the application name here
@@ -24,7 +28,7 @@ jobs:
         id: create_release
         uses: actions/create-release@v1
         env:
-          # This token is provided by Actions, needs write permissions to repo
+          # This token is provided by Actions, now with write permissions
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref_name }} # Use the tag that triggered the workflow
@@ -34,6 +38,7 @@ jobs:
 
   # Job 2: Build binaries for different platforms and upload them
   build_release:
+    # ... (rest of the build_release job remains the same) ...
     name: Build Release Assets
     needs: create_release # Run only after the draft release is created
     strategy:
