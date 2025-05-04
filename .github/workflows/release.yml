@@ -1,0 +1,96 @@
+# .github/workflows/release.yml
+name: Release
+
+# Trigger this workflow when a tag matching v*.*.* (e.g., v1.0.0) is pushed
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+env:
+  CARGO_TERM_COLOR: always # Force color output in cargo logs
+  APP_NAME: rename-episodes # Your executable name
+
+jobs:
+  # Job 1: Create a draft release placeholder on GitHub
+  create_release:
+    name: Create Release Draft
+    runs-on: ubuntu-latest
+    outputs:
+      # Pass the upload URL to subsequent jobs
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Create Release Draft
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          # This token is provided by Actions, needs write permissions to repo
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }} # Use the tag that triggered the workflow
+          release_name: Release ${{ github.ref_name }} # Release title (e.g., "Release v1.0.0")
+          draft: true # Create as a draft first
+          prerelease: false # Mark as a full release, not pre-release
+
+  # Job 2: Build binaries for different platforms and upload them
+  build_release:
+    name: Build Release Assets
+    needs: create_release # Run only after the draft release is created
+    strategy:
+      matrix:
+        # Define the build targets (platform, OS runner, resulting file suffix, packaging command)
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            asset_suffix: linux-x64.tar.gz
+            package_cmd: |
+              tar czvf ${{ env.APP_NAME }}-${{ github.ref_name }}-linux-x64.tar.gz -C target/${{ matrix.target }}/release ${{ env.APP_NAME }} README.md LICENSE
+          - target: x86_64-pc-windows-gnu # Using GNU toolchain is often easier for cross-compiling on Linux runners
+            os: ubuntu-latest
+            asset_suffix: windows-x64.zip
+            package_cmd: |
+              zip -j ${{ env.APP_NAME }}-${{ github.ref_name }}-windows-x64.zip target/${{ matrix.target }}/release/${{ env.APP_NAME }}.exe README.md LICENSE
+          - target: x86_64-apple-darwin # Intel macOS
+            os: macos-latest # Needs to run on a macOS runner
+            asset_suffix: macos-x64.tar.gz
+            package_cmd: |
+              tar czvf ${{ env.APP_NAME }}-${{ github.ref_name }}-macos-x64.tar.gz -C target/${{ matrix.target }}/release ${{ env.APP_NAME }} README.md LICENSE
+          - target: aarch64-apple-darwin # Apple Silicon macOS
+            os: macos-latest # Needs to run on a macOS runner
+            asset_suffix: macos-arm64.tar.gz
+            package_cmd: |
+              tar czvf ${{ env.APP_NAME }}-${{ github.ref_name }}-macos-arm64.tar.gz -C target/${{ matrix.target }}/release ${{ env.APP_NAME }} README.md LICENSE
+
+    runs-on: ${{ matrix.os }} # Run on the OS specified in the matrix configuration
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4 # Checks out your repository under $GITHUB_WORKSPACE
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable # Installs Rust
+        with:
+          targets: ${{ matrix.target }} # Installs support for the specific target platform
+
+      # Add linker dependencies if needed for cross-compiling (e.g., Windows from Linux)
+      - name: Install linker for Windows cross-compilation (if needed)
+        if: matrix.os == 'ubuntu-latest' && contains(matrix.target, 'windows')
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - name: Build binary
+        # Run cargo build for the specified target in release mode
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package artifact
+        shell: bash # Use bash for the packaging commands defined in the matrix
+        run: ${{ matrix.package_cmd }} # Execute the tar or zip command
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create_release.outputs.upload_url }} # URL from the first job
+          asset_path: ./${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }} # Path to the generated .zip or .tar.gz
+          asset_name: ${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }} # How the file will be named on the Releases page
+          asset_content_type: application/octet-stream # Standard content type for archives

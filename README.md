@@ -19,7 +19,7 @@ A command-line tool written in Rust to rename TV episode files based on common p
 ## Example
 
 **Before:**
-`sun.wars.tales.of.the.oveworld.s01e02.1080p.web.h264-sylix[EZTVx.to].mkv`
+`sun.wars.tales.of.the.overworld.s01e02.1080p.web.h264-sylix[EZTVx.to].mkv`
 
 **After:**
 `Sun.Wars.Tales.of.the.Overworld.S01E02.1080p.web.h264.mkv`
