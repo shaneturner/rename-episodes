@@ -100,7 +100,14 @@ jobs:
         run: |
           # Ensure LICENSE exists before packaging
           if [ ! -f LICENSE ]; then echo "LICENSE file not found!" >&2; exit 1; fi
-          tar czvf "${{ steps.paths.outputs.asset_filename }}" -C target/${{ matrix.target }}/release "${{ steps.paths.outputs.exe_name }}" -C . README.md LICENSE
+          if [ ! -f README.md ]; then echo "README.md file not found!" >&2; exit 1; fi # Add check for README
+
+          # Create archive: Add root files first, then change dir for executable
+          tar czvf "${{ steps.paths.outputs.asset_filename }}" \
+              README.md \
+              LICENSE \
+              -C target/${{ matrix.target }}/release \
+              "${{ steps.paths.outputs.exe_name }}"
 
       - name: Package artifact (Windows)
         shell: bash
