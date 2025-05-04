@@ -9,7 +9,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always # Force color output in cargo logs
-  APP_NAME: rename-episodes # Your executable name
+  APP_NAME: rename-episodes # Define the application name here
 
 jobs:
   # Job 1: Create a draft release placeholder on GitHub
@@ -38,25 +38,20 @@ jobs:
     needs: create_release # Run only after the draft release is created
     strategy:
       matrix:
-        # Define the build targets (platform, OS runner, resulting file suffix)
-        # REMOVED package_cmd from here
+        # Define only the parts that fundamentally change the build process
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             asset_suffix: linux-x64.tar.gz
-            asset_exe_name: ${{ env.APP_NAME }} # Linux executable name
-          - target: x86_64-pc-windows-gnu # Using GNU toolchain is often easier for cross-compiling on Linux runners
+          - target: x86_64-pc-windows-gnu
             os: ubuntu-latest
             asset_suffix: windows-x64.zip
-            asset_exe_name: ${{ env.APP_NAME }}.exe # Windows adds .exe
-          - target: x86_64-apple-darwin # Intel macOS
-            os: macos-latest # Needs to run on a macOS runner
+          - target: x86_64-apple-darwin
+            os: macos-latest
             asset_suffix: macos-x64.tar.gz
-            asset_exe_name: ${{ env.APP_NAME }} # macOS executable name
-          - target: aarch64-apple-darwin # Apple Silicon macOS
-            os: macos-latest # Needs to run on a macOS runner
+          - target: aarch64-apple-darwin
+            os: macos-latest
             asset_suffix: macos-arm64.tar.gz
-            asset_exe_name: ${{ env.APP_NAME }} # macOS executable name
 
     runs-on: ${{ matrix.os }} # Run on the OS specified in the matrix configuration
     steps:
@@ -78,30 +73,38 @@ jobs:
         # Run cargo build for the specified target in release mode
         run: cargo build --release --target ${{ matrix.target }}
 
+      # Determine executable path and final asset name based on OS within steps
+      - name: Set executable name and path
+        id: paths
+        shell: bash
+        run: |
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            echo "exe_name=${{ env.APP_NAME }}.exe" >> $GITHUB_OUTPUT
+            echo "exe_path=target/${{ matrix.target }}/release/${{ env.APP_NAME }}.exe" >> $GITHUB_OUTPUT
+          else
+            echo "exe_name=${{ env.APP_NAME }}" >> $GITHUB_OUTPUT
+            echo "exe_path=target/${{ matrix.target }}/release/${{ env.APP_NAME }}" >> $GITHUB_OUTPUT
+          fi
+          echo "asset_filename=${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }}" >> $GITHUB_OUTPUT
+
       # --- Packaging Steps ---
-      # Use if conditions based on the OS or target to run the correct command
       - name: Package artifact (Linux/macOS)
         shell: bash
         # Run if the target is Linux or macOS
         if: contains(matrix.target, 'linux') || contains(matrix.target, 'darwin')
         run: |
-          asset_dir="target/${{ matrix.target }}/release"
-          asset_filename="${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }}"
-          # Ensure LICENSE exists before copying
+          # Ensure LICENSE exists before packaging
           if [ ! -f LICENSE ]; then echo "LICENSE file not found!" >&2; exit 1; fi
-          tar czvf "${asset_filename}" -C "${asset_dir}" "${{ matrix.asset_exe_name }}" -C . README.md LICENSE
+          tar czvf "${{ steps.paths.outputs.asset_filename }}" -C target/${{ matrix.target }}/release "${{ steps.paths.outputs.exe_name }}" -C . README.md LICENSE
 
       - name: Package artifact (Windows)
         shell: bash
         # Run if the target is Windows
         if: contains(matrix.target, 'windows')
         run: |
-          asset_dir="target/${{ matrix.target }}/release"
-          asset_filename="${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }}"
-          # Ensure LICENSE exists before copying
+          # Ensure LICENSE exists before packaging
           if [ ! -f LICENSE ]; then echo "LICENSE file not found!" >&2; exit 1; fi
-          # Using zip -j to junk paths and put files directly in the archive root
-          zip -j "${asset_filename}" "${asset_dir}/${{ matrix.asset_exe_name }}" README.md LICENSE
+          zip -j "${{ steps.paths.outputs.asset_filename }}" "${{ steps.paths.outputs.exe_path }}" README.md LICENSE
       # --- End Packaging Steps ---
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
@@ -109,7 +112,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create_release.outputs.upload_url }} # URL from the first job
-          # Construct asset path/name directly here, matching the packaging steps
-          asset_path: ./${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }}
-          asset_name: ${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }}
-          asset_content_type: application/octet-stream # Standard content type for archives
+          # Use the asset filename determined in the 'paths' step
+          asset_path: ./${{ steps.paths.outputs.asset_filename }}
+          asset_name: ${{ steps.paths.outputs.asset_filename }}
+          asset_content_type: application/octet-stream
